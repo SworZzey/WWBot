@@ -1,87 +1,52 @@
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs')
-const statsFile = 'stats.json';
 const muvies = 'movies.txt'
 const token = '8012062999:AAH-Dvc0R59fZkaTcvBLlVCp9tJHy48ovjA'
-
 const bot = new TelegramBot(token, {polling: true});
+const setupSpamCommand = require('./commands/spam');
+const spamCommand = setupSpamCommand(bot);
 
-const bannedWords = fs.readFileSync('badWords', 'utf8')
-    .split('\n')
-    .map(word => word.trim().toLowerCase())
-    .filter(word => word)
+const setupStatsCommand = require('./commands/stats');
+const setupStatsUpdater = require('./commands/statsUpdater');
+const statsCommand = setupStatsCommand(bot);
+const updateStats = setupStatsUpdater(bot);
+
+const setupGameCommand = require('./commands/game')
+const gameCommand = setupGameCommand(bot);
+
+const setupRollCommand = require('./commands/roll')
+const rollCommand = setupRollCommand(bot);
+
+const setupModerCommand = require('./commands/moderating')
+const moderCommand = setupModerCommand(bot);
 
 
-const targetName = ['данил', 'илья', 'рома', 'илюха']
 
-const games = ['CS2', 'Dota 2', 'FarCry', 'The Dark Pictures', 'Иди уроки учи, дебил', 'PUBG', 'ETS2', 'Симулятор Шаурмичной', 'Что нибудь новенькое', 'Бильярд']
+// const movies = fs.readFileSync(muvies, 'utf8')
+//     .split('\n')
+//     .map(word => word.trim().toLowerCase())
+//     .filter(word => word.length > 0);
+//
+// const randomMovies = () => {
+//     const randNum = getRandomInt(0, 50);
+//     return movies[randNum]
+// }
 
-
-// Формирование статистики
-let stats = {}
-try {
-    stats = JSON.parse(fs.readFileSync(statsFile))
-} catch (e) {
-    stats = {}
-}
-
-const movies = fs.readFileSync(muvies, 'utf8')
-    .split('\n')
-    .map(word => word.trim().toLowerCase())
-    .filter(word => word.length > 0);
-
-function saveStats() {
-    fs.writeFileSync(statsFile, JSON.stringify(stats, null, 2))
-}
-
-// Вывод рандомного числа в указанном диапазоне
-const getRandomInt = (min, max) => {
-    return Math.floor(Math.random() * (max - min)+1) + min;
-}
-
-const randomGame = () => {
-    const randNum = getRandomInt(0, games.length);
-    return games[randNum]
-}
-
-const randomMovies = () => {
-    const randNum = getRandomInt(0, 50);
-    return movies[randNum]
-}
 
 const start = () => {
 
     // Команды бота
     bot.setMyCommands([
         {command: '/spam', description: 'Заспамить в чат'},
-        {command: '/start', description: 'Старт'},
         {command: '/stats', description: 'Статистика по сообщениям'},
         {command: '/game', description: 'Рулетка со случайной игрой'},
         {command: '/movie', description: 'Рандомный фильм из топ 50 лучших'},
         {command: '/roll', description: 'Рандомное число. Пример /roll 50 - 100'}
     ])
 
-
-    // Модерация банн слов
-    bot.on('text', async (msg) => {
-        const text = msg.text ? msg.text.toLowerCase() : '';
-        const chatId = msg.chat.id;
-
-
-        if (text) {
-            const hasTargetName = targetName.some(name =>
-                text.includes(name.toLowerCase())
-            );
-            const hasBannedWord = bannedWords.some(word =>
-                text.includes(word.toLowerCase())
-            );
-
-            if (hasTargetName && hasBannedWord) {
-                await bot.deleteMessage(chatId, msg.message_id)
-            }
-        }
-    })
-
+    bot.on('message', async (msg, next) => {
+        await moderCommand(msg, next);
+    });
 
 
     // Реакция бота на команды
@@ -89,74 +54,38 @@ const start = () => {
         const text = msg.text;
         const chatId = msg.chat.id
 
-        if (text === '/start') {
-            await bot.sendMessage(chatId, '@DanilSavitskiy');
-        }
 
         if (text === '/spam') {
-            await bot.sendMessage(chatId, 'Сколько отправлять сообщений');
-            bot.once('text', async (ctx) => {
-                const count = Number(ctx.text);
-
-                if (isNaN(count)) {
-                    await bot.sendMessage(chatId, 'Необходимо число');
-                }
-                try {
-                    for (let i = 0; i < count; i++) {
-                        await bot.sendMessage(chatId, '@DanilSavitskiy');
-                        await new Promise(resolve => setTimeout(resolve, 500));
-                    }
-                } catch (error) {
-                    await bot.sendMessage(chatId, 'Дальше отправлять не могу, ТГ банит')
-                }
-            })
+            await spamCommand(msg);
         }
 
 
         if (text === '/stats') {
-            const sortedUsers = Object.entries(stats)
-                .sort((a, b) => b[1].messages - a[1].messages)
-                .slice(0, 10)
-
-            if (sortedUsers.length === 0) {
-                await bot.sendMessage(chatId, 'Статистика пуста');
-                return;
-            }
-
-            let reply = '🏆 **Топ пользователей по сообщениям:**\n\n'
-            sortedUsers.forEach(([userId, data], index) => {
-                reply += `${index+1}. ${data.username}: ${data.messages} сообщений. \n`
-            })
-
-            await bot.sendMessage(chatId, reply);
+            await statsCommand(msg)
         }
 
         if (text === '/game') {
-            await bot.sendMessage(chatId, String(randomGame()))
+            await gameCommand(msg)
         }
 
-        if (text === '/movie') {
-            await bot.sendMessage(chatId, String(randomMovies()))
+        // if (text === '/movie') {
+        //     await bot.deleteMessage(chatId, msg.message_id);
+        //     await bot.sendMessage(chatId, String(randomMovies()))
+        // }
+
+        if (text && text.includes('/roll')) {
+            await rollCommand(msg);
         }
 
     })
 
-    // обновление статистики
-    bot.on('message', async (msg) => {
-        const userId = msg.from.id;
-        const username = msg.from.username || `${msg.from.first_name} ${msg.from.last_name || ''}`.trim()
-
-        if (!stats[userId]) {
-            stats[userId] = {
-                username: username,
-                messages: 0
-            }
-        }
-
-        stats[userId].messages++;
-        saveStats();
-    })
+    bot.on('message', updateStats)
 }
 
-
 start();
+
+module.exports = {
+    bot,
+    TelegramBot,
+    token
+}
